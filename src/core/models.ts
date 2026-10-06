@@ -42,10 +42,27 @@ export interface Risk {
   itemId?: string;
 }
 
+export type CheckStatus = 'pending' | 'packed' | 'out';
+
+export interface CheckBaselineEntry {
+  name: string;
+  placement: Placement;
+  itemDimensions: Dimensions;
+}
+
+export interface CheckSession {
+  planMode: PlanMode;
+  baseline: Record<string, CheckBaselineEntry>;
+  statuses: Record<string, CheckStatus>;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 export interface PackingSnapshot {
   suitcase: Suitcase;
   items: PackingItem[];
   selectedPlan: PlanMode;
+  checkSession?: CheckSession | null;
 }
 
 export function itemVolume(item: Dimensions): number {

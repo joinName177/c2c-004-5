@@ -11,7 +11,8 @@ export class LocalPlannerRepository implements PlannerRepository {
     const raw = this.storage.getItem(KEY);
     if (!raw) return { value: createSampleSnapshot() };
     try {
-      return { value: JSON.parse(raw) as PackingSnapshot };
+      const parsed = JSON.parse(raw) as PackingSnapshot;
+      return { value: { checkSession: null, ...parsed } };
     } catch {
       return { value: createSampleSnapshot(), warning: '本地数据无法读取，已恢复示例。' };
     }

@@ -55,4 +55,30 @@ describe('Luggage planner App', () => {
     await wrapper.get('[data-testid="print-button"]').trigger('click');
     expect(getPrintCount()).toBe(1);
   });
+
+  it('tracks actual packing status across list, projections and print sheet', async () => {
+    const { wrapper } = render();
+    await wrapper.get('[data-testid="start-check"]').trigger('click');
+    await wrapper.get('[data-testid="check-packed-jacket"]').trigger('click');
+    await wrapper.get('[data-testid="check-packed-jacket"]').trigger('click');
+    expect(wrapper.get('[data-testid="count-packed"]').text()).toContain('1');
+    expect(wrapper.findAll('[data-item-id="jacket"].check-packed')).toHaveLength(2);
+    expect(wrapper.find('.item-list .check-badge.packed').exists()).toBe(true);
+    expect(wrapper.get('.print-sheet').text()).toContain('已放入');
+    await wrapper.get('[data-testid="finish-check"]').trigger('click');
+    expect(wrapper.get('.notice').text()).toContain('必带');
+  });
+
+  it('asks for a migration review before reusing check results after a resize', async () => {
+    const { wrapper } = render();
+    await wrapper.get('[data-testid="start-check"]').trigger('click');
+    await wrapper.get('[data-testid="check-packed-jacket"]').trigger('click');
+    await wrapper.get('[data-plan="shopping"]').trigger('click');
+    const box = wrapper.get('[data-testid="reconcile-box"]');
+    expect(box.text()).toContain('轻薄外套');
+    expect(box.text()).toContain('需重新确认');
+    await wrapper.get('[data-testid="apply-reconcile"]').trigger('click');
+    expect(wrapper.find('[data-testid="reconcile-box"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="count-packed"]').text()).toContain('0');
+  });
 });
