@@ -36,4 +36,117 @@ describe('usePlanner', () => {
     expect(planner.plans.value.shopping.name).toBe('购物版');
     expect(repository.saved?.selectedPlan).toBe('shopping');
   });
+
+  it('starts a check session and only marks placed items as packed', () => {
+    const repository = new MemoryRepository();
+    const planner = usePlanner({ repository, printPort: { print() {} } });
+    planner.startCheck();
+    expect(planner.state.check?.entries).toHaveLength(planner.state.items.length);
+    expect(planner.state.check?.entries.every((entry) => entry.status === 'pending')).toBe(true);
+
+    const placed = planner.currentPlan.value.placements[0].itemId;
+    planner.setItemCheck(placed, 'packed');
+    expect(planner.checkSummary.value?.packed).toBe(1);
+
+    const unplaced = planner.state.items.find((item) => !planner.currentPlan.value.placements.some((p) => p.itemId === item.id));
+    if (unplaced) {
+      planner.setItemCheck(unplaced.id, 'packed');
+      expect(planner.state.check?.entries.find((entry) => entry.itemId === unplaced.id)?.status).toBe('pending');
+      expect(planner.notice.value).toContain('只有当前方案装入的物品才能记为已放入');
+    }
+    expect(repository.saved?.check?.entries.find((entry) => entry.itemId === placed)?.status).toBe('packed');
+  });
+
+  it('counts a repeated confirmation only once', () => {
+    const repository = new MemoryRepository();
+    const planner = usePlanner({ repository, printPort: { print() {} } });
+    planner.startCheck();
+    const placed = planner.currentPlan.value.placements[0].itemId;
+    planner.setItemCheck(placed, 'packed');
+    planner.setItemCheck(placed, 'packed');
+    planner.setItemCheck(placed, 'packed');
+    expect(planner.checkSummary.value?.packed).toBe(1);
+    expect(planner.state.check?.entries.filter((entry) => entry.itemId === placed)).toHaveLength(1);
+  });
+
+  it('blocks declaring completion while must-have items are missing', () => {
+    const repository = new MemoryRepository();
+    const planner = usePlanner({ repository, printPort: { print() {} } });
+    planner.startCheck();
+    planner.declareComplete();
+    expect(planner.state.check?.completed).toBe(false);
+    expect(planner.notice.value).toContain('必带物品未放入');
+
+    for (const item of planner.state.items) {
+      const placedInPlan = planner.currentPlan.value.placements.some((p) => p.itemId === item.id);
+      planner.setItemCheck(item.id, placedInPlan ? 'packed' : 'removed');
+    }
+    planner.declareComplete();
+    expect(planner.state.check?.completed).toBe(true);
+    expect(repository.saved?.check?.completed).toBe(true);
+  });
+
+  it('keeps untouched confirmations and resets only edited items after regeneration', () => {
+    const repository = new MemoryRepository();
+    const planner = usePlanner({ repository, printPort: { print() {} } });
+    planner.startCheck();
+    const [first, second] = planner.currentPlan.value.placements;
+    planner.setItemCheck(first.itemId, 'packed');
+    planner.setItemCheck(second.itemId, 'packed');
+
+    planner.updateItem(first.itemId, { length: 40 });
+    expect(planner.state.check?.entries.find((entry) => entry.itemId === first.itemId)?.status).toBe('pending');
+    expect(planner.checkReport.value?.invalidated.map((entry) => entry.itemId)).toContain(first.itemId);
+
+    planner.regenerate();
+    const kept = planner.state.check?.entries.find((entry) => entry.itemId === second.itemId);
+    if (kept?.status === 'packed') {
+      expect(planner.checkReport.value?.kept.map((entry) => entry.itemId)).toContain(second.itemId);
+    }
+    expect(planner.state.check?.entries.filter((entry) => entry.status === 'packed').length).toBeLessThanOrEqual(1);
+  });
+
+  it('drops deleted items from the session and reports them by name', () => {
+    const repository = new MemoryRepository();
+    const planner = usePlanner({ repository, printPort: { print() {} } });
+    planner.startCheck();
+    const placed = planner.currentPlan.value.placements[0].itemId;
+    const name = planner.state.items.find((item) => item.id === placed)?.name ?? '';
+    planner.setItemCheck(placed, 'packed');
+    planner.removeItem(placed);
+    expect(planner.state.check?.entries.some((entry) => entry.itemId === placed)).toBe(false);
+    expect(planner.checkReport.value?.dropped.map((entry) => entry.name)).toContain(name);
+  });
+
+  it('reconciles confirmations against the newly selected plan', () => {
+    const repository = new MemoryRepository();
+    const planner = usePlanner({ repository, printPort: { print() {} } });
+    planner.startCheck();
+    const placed = planner.currentPlan.value.placements[0].itemId;
+    planner.setItemCheck(placed, 'packed');
+    planner.selectPlan('shopping');
+    expect(planner.state.check?.planId).toBe('shopping');
+    expect(planner.state.check?.entries).toHaveLength(planner.state.items.length);
+  });
+
+  it('resumes the in-progress session after a reload', () => {
+    const repository = new MemoryRepository();
+    const planner = usePlanner({ repository, printPort: { print() {} } });
+    planner.startCheck();
+    const placed = planner.currentPlan.value.placements[0].itemId;
+    planner.setItemCheck(placed, 'packed');
+
+    const reloaded = usePlanner({ repository: new MemoryRepository(repository.saved!), printPort: { print() {} } });
+    expect(reloaded.state.check?.entries.find((entry) => entry.itemId === placed)?.status).toBe('packed');
+    expect(reloaded.checkSummary.value?.packed).toBe(1);
+  });
+
+  it('loads legacy snapshots saved before the check flow existed', () => {
+    const legacy = createSampleSnapshot() as Partial<PackingSnapshot>;
+    delete legacy.check;
+    const planner = usePlanner({ repository: new MemoryRepository(legacy as PackingSnapshot), printPort: { print() {} } });
+    expect(planner.state.check).toBeNull();
+    planner.startCheck();
+    expect(planner.state.check?.entries).toHaveLength(planner.state.items.length);
+  });
 });

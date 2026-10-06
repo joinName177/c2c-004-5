@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { LocalPlannerRepository } from '../adapters/local-planner.repository';
 import { BrowserPrintAdapter } from '../adapters/browser-print.adapter';
 import { validateSuitcase } from '../core/packing-engine';
+import type { CheckStatus } from '../core/models';
 import type { PlannerRepository } from '../ports/planner-repository.port';
 import type { PrintPort } from '../ports/print.port';
 import { usePlanner } from './usePlanner';
@@ -12,12 +13,16 @@ import ItemList from './components/ItemList.vue';
 import PackingProjection from './components/PackingProjection.vue';
 import PlanCompare from './components/PlanCompare.vue';
 import RiskPanel from './components/RiskPanel.vue';
+import CheckPanel from './components/CheckPanel.vue';
 import PrintSheet from './components/PrintSheet.vue';
 
 const props = defineProps<{ repository?: PlannerRepository; printPort?: PrintPort }>();
 const planner = usePlanner({ repository: props.repository ?? new LocalPlannerRepository(window.localStorage), printPort: props.printPort ?? new BrowserPrintAdapter() });
 const selectedItem = ref('');
 const errors = computed(() => validateSuitcase(planner.state.suitcase));
+const checkStatusById = computed<Record<string, CheckStatus> | null>(() => planner.state.check
+  ? Object.fromEntries(planner.state.check.entries.map((entry) => [entry.itemId, entry.status]))
+  : null);
 </script>
 
 <template>
@@ -29,15 +34,28 @@ const errors = computed(() => validateSuitcase(planner.state.suitcase));
       <div class="workspace">
         <aside class="left-column">
           <SuitcaseForm :suitcase="planner.state.suitcase" :errors="errors" @update="planner.updateSuitcase" />
-          <section class="panel inventory"><div class="section-title"><div><span>02 / INVENTORY</span><h2>待装物品</h2></div><b>{{ planner.state.items.length }} 件</b></div><ItemEditor @add="planner.addItem" /><ItemList :items="planner.state.items" @remove="planner.removeItem" @toggle="(id, mustHave) => planner.updateItem(id, { mustHave })" /></section>
+          <section class="panel inventory"><div class="section-title"><div><span>02 / INVENTORY</span><h2>待装物品</h2></div><b>{{ planner.state.items.length }} 件</b></div><ItemEditor @add="planner.addItem" /><ItemList :items="planner.state.items" :checks="checkStatusById" @remove="planner.removeItem" @toggle="(id, mustHave) => planner.updateItem(id, { mustHave })" @update="planner.updateItem" /></section>
         </aside>
         <section class="right-column">
-          <div class="canvas-panel"><div class="canvas-head"><div><span>03 / PACKING MAP</span><h2>{{ planner.currentPlan.value.name }}摆放方案</h2></div><div class="metrics"><span><b>{{ Math.round(planner.currentPlan.value.capacityRatio * 100) }}%</b>空间利用</span><span><b>{{ planner.currentPlan.value.totalWeight.toFixed(1) }}</b>kg 已装</span><span><b>{{ planner.currentPlan.value.unplaced.length }}</b>件未装</span></div></div><div class="projections"><PackingProjection view="top" :plan="planner.currentPlan.value" :suitcase="planner.state.suitcase" :items="planner.state.items" :selected-id="selectedItem" @select="selectedItem = $event" /><PackingProjection view="side" :plan="planner.currentPlan.value" :suitcase="planner.state.suitcase" :items="planner.state.items" :selected-id="selectedItem" @select="selectedItem = $event" /></div><p class="canvas-note">点击色块可在两个视图中同步定位物品。摆放坐标以箱体左下后角为原点。</p></div>
+          <div class="canvas-panel"><div class="canvas-head"><div><span>03 / PACKING MAP</span><h2>{{ planner.currentPlan.value.name }}摆放方案</h2></div><div class="metrics"><span><b>{{ Math.round(planner.currentPlan.value.capacityRatio * 100) }}%</b>空间利用</span><span><b>{{ planner.currentPlan.value.totalWeight.toFixed(1) }}</b>kg 已装</span><span><b>{{ planner.currentPlan.value.unplaced.length }}</b>件未装</span></div></div><div class="projections"><PackingProjection view="top" :plan="planner.currentPlan.value" :suitcase="planner.state.suitcase" :items="planner.state.items" :selected-id="selectedItem" :checks="checkStatusById" @select="selectedItem = $event" /><PackingProjection view="side" :plan="planner.currentPlan.value" :suitcase="planner.state.suitcase" :items="planner.state.items" :selected-id="selectedItem" :checks="checkStatusById" @select="selectedItem = $event" /></div><p class="canvas-note">点击色块可在两个视图中同步定位物品。摆放坐标以箱体左下后角为原点。</p></div>
+          <CheckPanel
+            :session="planner.state.check"
+            :items="planner.state.items"
+            :plan="planner.currentPlan.value"
+            :summary="planner.checkSummary.value"
+            :report="planner.checkReport.value"
+            :is-stale="planner.isStale.value"
+            @start="planner.startCheck"
+            @cancel="planner.cancelCheck"
+            @set-status="planner.setItemCheck"
+            @complete="planner.declareComplete"
+            @dismiss-report="planner.dismissCheckReport"
+          />
           <RiskPanel :risks="planner.risks.value" />
         </section>
       </div>
       <p class="notice" aria-live="polite">{{ planner.notice.value }}</p>
     </main>
-    <PrintSheet :suitcase="planner.state.suitcase" :items="planner.state.items" :plan="planner.currentPlan.value" :risks="planner.risks.value" />
+    <PrintSheet :suitcase="planner.state.suitcase" :items="planner.state.items" :plan="planner.currentPlan.value" :risks="planner.risks.value" :checks="checkStatusById" :check-completed="planner.state.check?.completed ?? false" />
   </div>
 </template>
